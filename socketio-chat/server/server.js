@@ -205,11 +205,31 @@ app.post('/api/register', async (req, res) => {
     
     console.log(colorful.debug(`⚡ New registration attempt for: ${username}`));
 
+    // Validate input
     if (!username || !password) {
       console.log(colorful.error('✗ Registration failed - Missing fields'));
       return res.status(400).json({ 
         success: false,
-        error: 'Username and password required' 
+        message: 'Username and password are required',
+        error: 'MISSING_FIELDS'
+      });
+    }
+
+    // Validate username format
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username must be 3-20 characters (letters, numbers, underscores)',
+        error: 'INVALID_USERNAME_FORMAT'
+      });
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters',
+        error: 'WEAK_PASSWORD'
       });
     }
 
@@ -218,7 +238,8 @@ app.post('/api/register', async (req, res) => {
       console.log(colorful.error(`✗ Username ${username} already exists`));
       return res.status(409).json({ 
         success: false,
-        error: 'Username already exists' 
+        message: 'Username already exists',
+        error: 'USERNAME_EXISTS'
       });
     }
 
@@ -230,13 +251,19 @@ app.post('/api/register', async (req, res) => {
     
     res.status(201).json({ 
       success: true,
-      username: user.username
+      message: 'Registration successful',
+      user: {
+        id: user._id,
+        username: user.username,
+        createdAt: user.createdAt
+      }
     });
   } catch (err) {
     console.log(colorful.error(`✗ Registration error: ${err.message}`));
     res.status(500).json({ 
       success: false,
-      error: err.message 
+      message: 'Registration failed due to server error',
+      error: 'SERVER_ERROR'
     });
   }
 });
@@ -250,7 +277,8 @@ app.post('/api/login', async (req, res) => {
       console.log(colorful.error('✗ Login failed - Missing credentials'));
       return res.status(400).json({ 
         success: false,
-        error: 'Username and password required' 
+        message: 'Username and password are required',
+        error: 'MISSING_CREDENTIALS'
       });
     }
 
@@ -260,7 +288,8 @@ app.post('/api/login', async (req, res) => {
       console.log(colorful.error(`✗ User ${username} not found`));
       return res.status(401).json({ 
         success: false,
-        error: 'Invalid credentials' 
+        message: 'Invalid credentials',
+        error: 'INVALID_CREDENTIALS'
       });
     }
 
@@ -269,20 +298,27 @@ app.post('/api/login', async (req, res) => {
       console.log(colorful.error(`✗ Invalid password for ${username}`));
       return res.status(401).json({ 
         success: false,
-        error: 'Invalid credentials' 
+        message: 'Invalid credentials',
+        error: 'INVALID_CREDENTIALS'
       });
     }
 
     console.log(colorful.success(`✓ User logged in: ${username}`));
-    res.json({ 
+    res.status(200).json({ 
       success: true,
-      username: user.username
+      message: 'Login successful',
+      user: {
+        id: user._id,
+        username: user.username,
+        createdAt: user.createdAt
+      }
     });
   } catch (err) {
     console.log(colorful.error(`✗ Login error: ${err.message}`));
     res.status(500).json({ 
       success: false,
-      error: 'Login failed' 
+      message: 'Login failed due to server error',
+      error: 'SERVER_ERROR'
     });
   }
 });
