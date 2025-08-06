@@ -6,6 +6,7 @@ const SocketContext = createContext();
 export const SocketProvider = ({ children, username }) => {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState(null);
   const [deletionState, setDeletionState] = useState({
     inProgress: false,
     error: null,
@@ -15,33 +16,62 @@ export const SocketProvider = ({ children, username }) => {
   useEffect(() => {
     if (!username) return;
 
-    const newSocket = io('http://localhost:5000', {
+    const socketUrl = import.meta.env.VITE_SERVER_URL || 
+                     (import.meta.env.DEV 
+                      ? 'http://localhost:5000' 
+                      : 'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com');
+
+    const newSocket = io(socketUrl, {
       auth: { username },
-      withCredentials: true
+      withCredentials: true,
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      transports: ['websocket'],
+      secure: import.meta.env.PROD,
+      path: '/socket.io'
     });
 
+    // Connection handlers
     newSocket.on('connect', () => {
       setIsConnected(true);
+      setConnectionError(null);
+      if (import.meta.env.DEV) {
+        console.log('Socket connected:', newSocket.id);
+      }
     });
 
     newSocket.on('disconnect', () => {
       setIsConnected(false);
+      if (import.meta.env.DEV) {
+        console.log('Socket disconnected');
+      }
     });
 
-    // Listen for deletion errors from server
+    newSocket.on('connect_error', (err) => {
+      setConnectionError(err.message);
+      console.error('Connection error:', err.message);
+      setTimeout(() => newSocket.connect(), 5000); // Attempt reconnect after 5 seconds
+    });
+
+    // Message deletion handlers
     newSocket.on('deleteError', (error) => {
       setDeletionState({
         inProgress: false,
         error: error.message,
         success: false
       });
-      // Clear error after 3 seconds
       setTimeout(() => setDeletionState(prev => ({...prev, error: null})), 3000);
     });
 
     setSocket(newSocket);
 
     return () => {
+      newSocket.off('connect');
+      newSocket.off('disconnect');
+      newSocket.off('connect_error');
+      newSocket.off('deleteError');
       newSocket.disconnect();
     };
   }, [username]);
@@ -65,7 +95,6 @@ export const SocketProvider = ({ children, username }) => {
         success: !response?.error
       });
       
-      // Clear success after 2 seconds
       if (!response?.error) {
         setTimeout(() => setDeletionState(prev => ({...prev, success: false})), 2000);
       }
@@ -76,6 +105,7 @@ export const SocketProvider = ({ children, username }) => {
     <SocketContext.Provider value={{ 
       socket, 
       isConnected,
+      connectionError,
       deleteMessage,
       deletionState
     }}>
