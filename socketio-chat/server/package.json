@@ -4,13 +4,17 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js",
+
     "start:dev": "nodemon server.js",
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
     "lint": "eslint . --ext .js,.jsx",
     "format": "prettier --write .",
+
+    "start": "npm run seed:production && node server.js",
     "seed:production": "node seed-db-render.js",
+
+    "deploy": "npm run seed:production && npm start",
     "start:test": "echo \"Use 'npm test' instead\" && exit 1",
     "test": "cross-env NODE_ENV=test jest --detectOpenHandles --forceExit --runInBand --testTimeout=30000",
     "test:watch": "cross-env NODE_ENV=test jest --watch --detectOpenHandles --runInBand --testTimeout=30000",

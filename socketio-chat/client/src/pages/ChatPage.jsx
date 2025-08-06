@@ -37,25 +37,6 @@ export default function ChatPage({ username, onLogout }) {
     };
   }, [contextMenu]);
 
-
-  {deletionState.error && (
-  <div className="deletion-feedback error">
-    {deletionState.error}
-  </div>
-)}
-
-{deletionState.success && (
-  <div className="deletion-feedback success">
-    Message deleted successfully!
-  </div>
-)}
-
-{deletionState.inProgress && (
-  <div className="deletion-feedback progress">
-    Deleting message...
-  </div>
-)}
-
   useEffect(() => {
     if (!socket) return;
 
@@ -85,7 +66,6 @@ export default function ChatPage({ username, onLogout }) {
           setMessages(prev => [...prev, msg]);
           setTypingUsers(prev => prev.filter(u => u !== msg.username));
           
-          // Mark message as read when received
           if (msg.username !== username) {
             socket.emit('messageRead', { messageId: msg._id });
           }
@@ -168,17 +148,17 @@ export default function ChatPage({ username, onLogout }) {
     setDeletionInProgress(true);
     
     socket.emit('deleteMessage', { 
-        messageId: contextMenu.messageId, 
-        deleteForEveryone 
+      messageId: contextMenu.messageId, 
+      deleteForEveryone 
     }, (response) => {
-        setDeletionInProgress(false);
-        if (response?.error) {
-            alert(`Delete failed: ${response.error}`);
-        }
+      setDeletionInProgress(false);
+      if (response?.error) {
+        alert(`Delete failed: ${response.error}`);
+      }
     });
     
     setContextMenu({ ...contextMenu, visible: false });
-};
+  };
 
   const getFileIcon = (mimeType) => {
     if (mimeType.startsWith('image/')) return '🖼️';
@@ -367,7 +347,6 @@ export default function ChatPage({ username, onLogout }) {
 
   return (
     <div className="chat-app">
-      {/* Context Menu */}
       {contextMenu.visible && (
         <div 
           ref={contextMenuRef}
@@ -500,19 +479,20 @@ export default function ChatPage({ username, onLogout }) {
                     return null;
                   }
 
+                  const isCurrentUser = msg.username === username;
+                  
                   return (
                     <div 
                       key={msg._id || i} 
-                      className={`message-row ${msg.username === username ? 'you' : 'other'}`}
+                      className={`message-row ${isCurrentUser ? 'you' : 'other'}`}
                       onContextMenu={(e) => handleContextMenu(e, msg._id)}
                     >
                       <div className="message-bubble">
-                        <div className="msg-user-label">
-                          {msg.username === username ? 'You' : msg.username}
-                          {msg.readBy?.includes(msg.username === username ? username : msg.username) && (
-                            <span className="read-receipt">✓✓</span>
-                          )}
-                        </div>
+                        {!isCurrentUser && (
+                          <div className="msg-user-label">
+                            {msg.username}
+                          </div>
+                        )}
                         <div className="msg-text">
                           {msg.content}
                           {msg.file && renderFileMessage(msg.file)}
@@ -521,6 +501,9 @@ export default function ChatPage({ username, onLogout }) {
                           <div className="msg-time">
                             {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
+                          {isCurrentUser && msg.readBy?.includes(username) && (
+                            <span className="read-receipt">✓✓</span>
+                          )}
                         </div>
                       </div>
                     </div>
