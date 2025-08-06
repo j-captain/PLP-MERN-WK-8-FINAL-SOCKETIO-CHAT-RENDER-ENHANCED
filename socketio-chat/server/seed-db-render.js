@@ -154,15 +154,9 @@ const seedProductionDatabase = async () => {
     });
     console.log('🟢 Connected to MongoDB Atlas');
 
-    // Clear existing data (commented out for safety)
-    // console.log('\n⚠️ Clearing existing data...');
-    // await User.deleteMany({});
-    // await Room.deleteMany({});
-    // await Message.deleteMany({});
-
-    // Create users
+    // Create users (with upsert logic)
     const users = [];
-    console.log('\n👤 Creating 15 users...');
+    console.log('\n👤 Seeding users...');
     
     for (let i = 0; i < 15; i++) {
       const firstName = kenyanFirstNames[i];
@@ -170,35 +164,50 @@ const seedProductionDatabase = async () => {
       const username = `${firstName.toLowerCase()}_${lastName.toLowerCase()}`;
       const password = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
 
-      const user = new User({ username, password });
-      await user.save();
+      // Upsert user (create if doesn't exist)
+      const user = await User.findOneAndUpdate(
+        { username },
+        { username, password },
+        { upsert: true, new: true }
+      );
+      
       users.push(user);
-      console.log(`   ➕ Created user: ${username}`);
+      console.log(`   ${user.isNew ? '➕ Created' : '🔄 Found'} user: ${username}`);
       
       if (i < 14) await new Promise(resolve => setTimeout(resolve, 300));
     }
 
-    // Create rooms
+    // Create rooms with upsert logic
     const roomNames = ['general', 'arsenal', 'man-u', 'liverpool', 'bedsa'];
     const rooms = [];
-    console.log('\n🚪 Creating 5 rooms...');
+    console.log('\n🚪 Seeding rooms...');
     
     for (let i = 0; i < 5; i++) {
       const participants = users.slice(i * 3, i * 3 + 5);
-      const room = new Room({
-        name: roomNames[i],
-        isPrivate: false,
-        participants: participants.map(u => u._id),
-        createdBy: participants[0]._id,
-        topic: `${roomNames[i].toUpperCase()} Discussions`
-      });
       
-      await room.save();
+      // Upsert room (create if doesn't exist)
+      const room = await Room.findOneAndUpdate(
+        { name: roomNames[i] },
+        {
+          name: roomNames[i],
+          isPrivate: false,
+          participants: participants.map(u => u._id),
+          createdBy: participants[0]._id,
+          topic: `${roomNames[i].toUpperCase()} Discussions`
+        },
+        { upsert: true, new: true }
+      );
+      
       rooms.push(room);
-      console.log(`   ➕ Created room: ${room.name}`);
+      console.log(`   ${room.isNew ? '➕ Created' : '🔄 Found'} room: ${room.name}`);
       
       if (i < 4) await new Promise(resolve => setTimeout(resolve, 300));
     }
+
+    // Clear existing messages (optional)
+    console.log('\n🧹 Clearing existing messages...');
+    await Message.deleteMany({});
+    console.log('   ✔ Messages cleared');
 
     // Create messages
     console.log('\n💬 Seeding messages...');
@@ -215,7 +224,7 @@ const seedProductionDatabase = async () => {
           username: senderUser.username,
           room: room._id,
           roomName: room.name,
-          time: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000), // Random time in last 7 days
+          time: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000),
           readBy: [senderUser.username],
           deletedFor: []
         });
