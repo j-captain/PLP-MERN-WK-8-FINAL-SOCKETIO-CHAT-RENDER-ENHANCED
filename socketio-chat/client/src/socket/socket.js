@@ -1,9 +1,9 @@
 import { io } from 'socket.io-client';
 
-const URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const URL = import.meta.env.VITE_API_BASE_URL || 'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com';
 
  
-const socket = io('http://localhost:5000', {
+const socket = io('https://plp-mern-wk-8-final-socketio-chat-render.onrender.com', {
   auth: {
     token: localStorage.getItem('authToken')  
   }
