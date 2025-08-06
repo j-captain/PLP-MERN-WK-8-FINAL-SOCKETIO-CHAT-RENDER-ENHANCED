@@ -7,7 +7,15 @@ export default function AuthPage({ onAuthSuccess }) {
   const handleAuth = async (username, password, isLogin) => {
     try {
       const endpoint = isLogin ? '/api/login' : '/api/register';
-      const response = await fetch(`http://localhost:5000${endpoint}`, {
+      const apiUrl = import.meta.env.VITE_API_URL || 
+                    (import.meta.env.DEV 
+                      ? 'http://localhost:5000/api' 
+                      : 'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com/api');
+      
+      // Remove duplicate /api if present in both apiUrl and endpoint
+      const fullUrl = `${apiUrl.replace(/\/api$/, '')}${endpoint}`;
+
+      const response = await fetch(fullUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -15,12 +23,14 @@ export default function AuthPage({ onAuthSuccess }) {
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || await response.text());
       }
 
       onAuthSuccess(username);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Authentication failed');
+      console.error('Auth error:', err);
     }
   };
 
