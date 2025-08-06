@@ -20,7 +20,13 @@ const roomSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    select: false
+    select: false,
+    minlength: [5, 'Password must be at least 4 characters'],
+    default: null // null means no password required
+  },
+  requiresPassword: {
+    type: Boolean,
+    default: false
   },
   participants: [{
     type: String, 
@@ -31,6 +37,7 @@ const roomSchema = new mongoose.Schema({
   }],
   createdBy: { 
     type: String, 
+    required: false
   },
   topic: {
     type: String,
@@ -50,14 +57,22 @@ const roomSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
+// Virtual for user count
 roomSchema.virtual('userCount').get(function() {
   return this.activeUsers.length;
 });
 
+// Pre-save hook to format name and handle password logic
 roomSchema.pre('save', function(next) {
   if (this.isModified('name')) {
     this.name = this.name.toLowerCase().replace(/\s+/g, '-');
   }
+  
+  // Automatically set requiresPassword based on password presence
+  if (this.isModified('password')) {
+    this.requiresPassword = this.password !== null && this.password !== '';
+  }
+  
   next();
 });
 

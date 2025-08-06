@@ -109,6 +109,68 @@ const upload = multer({
   }
 });
 
+// Password verification middleware
+async function verifyRoomPassword(req, res, next) {
+  try {
+    const { roomId } = req.params;
+    const { password } = req.body;
+    
+    const room = await Room.findById(roomId).select('+password');
+    
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // If room requires password but none provided or incorrect
+    if (room.requiresPassword) {
+      if (!password) {
+        return res.status(400).json({ error: 'Password is required for this room' });
+      }
+      if (room.password !== password) {
+        return res.status(403).json({ error: 'Incorrect room password' });
+      }
+    }
+    
+    req.room = room;
+    next();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+}
+
+app.post('/api/rooms', async (req, res) => {
+  try {
+    const { name, description, isPrivate, password, topic, createdBy } = req.body;
+    
+    const roomData = {
+      name,
+      description,
+      isPrivate,
+      topic,
+      createdBy
+    };
+    
+    if (password && password.trim() !== '') {
+      // Hash the password before saving
+      roomData.password = await bcrypt.hash(password, 10);
+      roomData.requiresPassword = true;
+    }
+    
+    const room = await Room.create(roomData);
+    
+    res.status(201).json({
+      success: true,
+      room: {
+        id: room._id,
+        name: room.name,
+        requiresPassword: room.requiresPassword
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Serve static files with proper headers and caching
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   setHeaders: (res, path) => {
@@ -443,11 +505,12 @@ io.use((socket, next) => {
 async function initializeDefaultRooms() {
   try {
     const defaultRooms = [
-      { name: 'general', topic: 'General Chat' },
-      { name: 'arsenal', topic: 'Arsenal FC Discussions' },
-      { name: 'man-u', topic: 'Manchester United FC' },
-      { name: 'liverpool', topic: 'Liverpool FC Fan Club' },
-      { name: 'bedsa', topic: 'BEDSA Community' }
+      { name: 'general', topic: 'General Chat', password: null },
+      { name: 'arsenal', topic: 'Arsenal FC Discussions', password: null },
+      { name: 'man-u', topic: 'Manchester United FC', password: null },
+      { name: 'liverpool', topic: 'Liverpool FC Fan Club', password: null },
+      { name: 'bedsa', topic: 'BEDSA Community', password: 'bedsa123' }, // Password protected
+      { name: 'moderators', topic: 'Moderators Only', password: 'modpass123' } // Password protected
     ];
 
     console.log(colorful.info('ℹ Initializing default rooms...'));
@@ -455,7 +518,18 @@ async function initializeDefaultRooms() {
     for (const roomData of defaultRooms) {
       const existingRoom = await Room.findOne({ name: roomData.name });
       if (!existingRoom) {
-        await Room.create(roomData);
+        const room = {
+          name: roomData.name,
+          topic: roomData.topic
+        };
+        
+        if (roomData.password) {
+          // Hash the password before saving
+          room.password = await bcrypt.hash(roomData.password, 10);
+          room.requiresPassword = true;
+        }
+        
+        await Room.create(room);
         console.log(colorful.success(`✓ Default room "${roomData.name}" created`));
       } else {
         console.log(colorful.debug(`⚡ Room "${roomData.name}" already exists`));
@@ -565,147 +639,213 @@ io.on('connection', async (socket) => {
     }
   }
 
-  socket.on('getRoomList', async () => {
-    try {
-      console.log(colorful.debug(`⚡ Room list requested by ${socket.id}`));
-      const rooms = await Room.find().sort({ lastActivity: -1 });
-      const roomList = rooms.map(r => ({
-        name: r.name,
-        userCount: roomUsers.get(r.name)?.size || 0,
-        topic: r.topic,
-        lastActivity: r.lastActivity
-      }));
-      socket.emit('roomList', roomList);
-      console.log(colorful.success(`✓ Sent room list to ${socket.id}`));
-    } catch (err) {
-      console.log(colorful.error(`✗ Error getting room list: ${err.message}`));
-      socket.emit('error', { message: 'Failed to get room list' });
+  // getRoomList event handler
+socket.on('getRoomList', async () => {
+  try {
+    console.log(colorful.debug(`⚡ Room list requested by ${socket.id}`));
+    const rooms = await Room.find().sort({ lastActivity: -1 });
+    const roomList = rooms.map(r => ({
+      name: r.name,
+      userCount: roomUsers.get(r.name)?.size || 0,
+      topic: r.topic,
+      lastActivity: r.lastActivity,
+      requiresPassword: r.requiresPassword || false
+    }));
+    socket.emit('roomList', roomList);
+    console.log(colorful.success(`✓ Sent room list to ${socket.id}`));
+  } catch (err) {
+    console.log(colorful.error(`✗ Error getting room list: ${err.message}`));
+    socket.emit('error', { message: 'Failed to get room list' });
+  }
+});
+
+  socket.on('joinRoom', async ({ roomName, username, password }, callback) => {
+  try {
+    console.log(colorful.debug(`⚡ Join room request: ${username} to ${roomName}`));
+
+    if (!roomName || !username) {
+      throw new Error('Missing room name or username');
     }
-  });
 
-  socket.on('joinRoom', async ({ roomName, username }) => {
-    try {
-      console.log(colorful.debug(`⚡ Join room request: ${username} to ${roomName}`));
+    const room = await Room.findOne({ name: roomName }).select('+password');
+    if (!room) {
+      throw new Error('Room does not exist');
+    }
 
-      if (!roomName || !username) {
-        throw new Error('Missing room name or username');
+    // Special case: general room doesn't require password
+    if (roomName !== 'general') {
+      // Check if room requires password for all other rooms
+      if (room.requiresPassword) {
+        if (!password) {
+          throw new Error('Password is required for this room');
+        }
+        
+        // Check if password is hashed (starts with $2a$ or similar)
+        const isHashed = room.password && 
+                        (room.password.startsWith('$2a$') || 
+                         room.password.startsWith('$2b$') || 
+                         room.password.startsWith('$2y$'));
+        
+        let isMatch;
+        if (isHashed) {
+          // Compare with bcrypt for hashed passwords
+          isMatch = await bcrypt.compare(password, room.password);
+        } else {
+          // Compare directly for plain text passwords (during migration)
+          isMatch = password === room.password;
+        }
+        
+        if (!isMatch) {
+          throw new Error('Incorrect room password');
+        }
       }
+    }
 
-      const room = await Room.findOne({ name: roomName });
-      if (!room) {
-        throw new Error('Room does not exist');
-      }
-
-      Array.from(socket.rooms)
-        .filter(r => r !== socket.id)
-        .forEach(room => {
-          socket.leave(room);
-          const users = roomUsers.get(room);
-          if (users && users.has(username)) {
-            users.delete(username);
-            if (users.size === 0) roomUsers.delete(room);
-          }
-        });
-
-      socket.join(roomName);
-      const usersInRoom = roomUsers.get(roomName) || new Set();
-      usersInRoom.add(username);
-      roomUsers.set(roomName, usersInRoom);
-
-      if (!room.participants.includes(username)) {
-        room.participants.push(username);
-        await room.save();
-      }
-
-      socket.emit('roomJoined', {
-        name: roomName,
-        userCount: usersInRoom.size,
-        topic: room.topic,
-        participants: Array.from(usersInRoom)
+    // Leave all other rooms
+    Array.from(socket.rooms)
+      .filter(r => r !== socket.id)
+      .forEach(room => {
+        socket.leave(room);
+        const users = roomUsers.get(room);
+        if (users && users.has(username)) {
+          users.delete(username);
+          if (users.size === 0) roomUsers.delete(room);
+        }
       });
 
-      const messages = await Message.find({ room: room._id })
-        .sort({ createdAt: -1 })
-        .limit(50);
-      
-      const messagesWithReadStatus = messages.map(msg => {
-        const receipt = readReceipts.get(msg._id.toString()) || new Set();
-        return {
-          ...msg.toObject(),
-          readBy: Array.from(receipt)
-        };
-      });
+    socket.join(roomName);
+    const usersInRoom = roomUsers.get(roomName) || new Set();
+    usersInRoom.add(username);
+    roomUsers.set(roomName, usersInRoom);
 
-      socket.emit('roomHistory', messagesWithReadStatus.reverse());
+    if (!room.participants.includes(username)) {
+      room.participants.push(username);
+      await room.save();
+    }
 
-      socket.to(roomName).emit('userJoined', {
-        username,
-        userCount: usersInRoom.size
-      });
+    const response = {
+      name: roomName,
+      userCount: usersInRoom.size,
+      topic: room.topic,
+      participants: Array.from(usersInRoom),
+      requiresPassword: room.requiresPassword || false
+    };
 
-      console.log(colorful.success(`✓ ${username} joined ${roomName} (${usersInRoom.size} users)`));
-    } catch (err) {
-      console.log(colorful.error(`✗ Join room error: ${err.message}`));
+    if (callback) {
+      callback({ status: 'success', room: response });
+    } else {
+      socket.emit('roomJoined', response);
+    }
+
+    const messages = await Message.find({ room: room._id })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    
+    const messagesWithReadStatus = messages.map(msg => {
+      const receipt = readReceipts.get(msg._id.toString()) || new Set();
+      return {
+        ...msg.toObject(),
+        readBy: Array.from(receipt)
+      };
+    });
+
+    socket.emit('roomHistory', messagesWithReadStatus.reverse());
+
+    socket.to(roomName).emit('userJoined', {
+      username,
+      userCount: usersInRoom.size
+    });
+
+    console.log(colorful.success(`✓ ${username} joined ${roomName} (${usersInRoom.size} users)`));
+  } catch (err) {
+    console.log(colorful.error(`✗ Join room error: ${err.message}`));
+    if (callback) {
+      callback({ status: 'error', message: err.message });
+    } else {
       socket.emit('roomError', { message: err.message });
     }
-  });
+  }
+});
 
-  socket.on('createRoom', async ({ roomName, username }) => {
-    try {
-      console.log(colorful.debug(`⚡ Create room request: ${roomName} by ${username}`));
-      
-      if (!roomName || !username) {
-        console.log(colorful.error('✗ Room creation failed - Missing fields'));
-        return socket.emit('roomError', { message: 'Room name and username are required' });
-      }
+  socket.on('createRoom', async ({ roomName, username, password, isPrivate }, callback) => {
+  try {
+    console.log(colorful.debug(`⚡ Create room request: ${roomName} by ${username}`));
+    
+    if (!roomName || !username) {
+      console.log(colorful.error('✗ Room creation failed - Missing fields'));
+      if (callback) callback({ error: 'Room name and username are required' });
+      return;
+    }
 
-      if (roomName.length > 30) {
-        return socket.emit('roomError', { message: 'Room name must be 30 characters or less' });
-      }
+    if (roomName.length > 30) {
+      if (callback) callback({ error: 'Room name must be 30 characters or less' });
+      return;
+    }
 
-      const formattedName = roomName.trim().toLowerCase().replace(/\s+/g, '-');
-      const existingRoom = await Room.findOne({ name: formattedName });
+    const formattedName = roomName.trim().toLowerCase().replace(/\s+/g, '-');
+    const existingRoom = await Room.findOne({ name: formattedName });
 
-      if (existingRoom) {
-        console.log(colorful.error(`✗ Room ${formattedName} already exists`));
-        return socket.emit('roomError', { message: 'Room already exists' });
-      }
+    if (existingRoom) {
+      console.log(colorful.error(`✗ Room ${formattedName} already exists`));
+      if (callback) callback({ error: 'Room already exists' });
+      return;
+    }
 
-      const room = await Room.create({
-        name: formattedName,
-        createdBy: username,
-        participants: [username],
-        topic: `Chat about ${formattedName}`,
-        lastActivity: new Date()
-      });
+    const roomData = {
+      name: formattedName,
+      createdBy: username,
+      participants: [username],
+      topic: `Chat about ${formattedName}`,
+      lastActivity: new Date(),
+      isPrivate: isPrivate || false
+    };
 
-      socket.join(formattedName);
-      const usersInRoom = new Set([username]);
-      roomUsers.set(formattedName, usersInRoom);
+    if (password && password.trim() !== '') {
+      roomData.password = password;
+      roomData.requiresPassword = true;
+    }
 
-      const rooms = await Room.find().sort({ lastActivity: -1 });
-      const roomList = rooms.map(r => ({
-        name: r.name,
-        userCount: roomUsers.get(r.name)?.size || 0,
-        topic: r.topic,
-        lastActivity: r.lastActivity
-      }));
-      
-      io.emit('roomList', roomList);
-      
-      socket.emit('roomJoined', {
-        name: room.name,
-        userCount: 1,
-        topic: room.topic,
-        participants: [username]
-      });
+    const room = await Room.create(roomData);
 
-      console.log(colorful.success(`✓ Room "${formattedName}" created by ${username}`));
-    } catch (err) {
-      console.log(colorful.error(`✗ Room creation error: ${err.message}`));
+    socket.join(formattedName);
+    const usersInRoom = new Set([username]);
+    roomUsers.set(formattedName, usersInRoom);
+
+    const rooms = await Room.find().sort({ lastActivity: -1 });
+    const roomList = rooms.map(r => ({
+      name: r.name,
+      userCount: roomUsers.get(r.name)?.size || 0,
+      topic: r.topic,
+      lastActivity: r.lastActivity,
+      requiresPassword: r.requiresPassword || false
+    }));
+    
+    io.emit('roomList', roomList);
+    
+    const response = {
+      name: room.name,
+      userCount: 1,
+      topic: room.topic,
+      participants: [username],
+      requiresPassword: room.requiresPassword || false
+    };
+
+    if (callback) {
+      callback({ status: 'success', room: response });
+    } else {
+      socket.emit('roomJoined', response);
+    }
+
+    console.log(colorful.success(`✓ Room "${formattedName}" created by ${username}`));
+  } catch (err) {
+    console.log(colorful.error(`✗ Room creation error: ${err.message}`));
+    if (callback) {
+      callback({ status: 'error', message: 'Failed to create room' });
+    } else {
       socket.emit('roomError', { message: 'Failed to create room' });
     }
-  });
+  }
+});
 
   socket.on('sendMessage', async (messageData) => {
     try {

@@ -17,6 +17,22 @@ const kenyanLastNames = [
   'Muthoni', 'Kibet', 'Chepkoech', 'Otieno', 'Nyaga', 'Wafula', 'Njeri', 'Koech'
 ];
 
+// Room passwords configuration
+const roomPasswords = {
+  'general': null, // No password for general
+  'arsenal': 'emirates', // 8 chars
+  'man-u':  'reddevils', // 9 chars
+  'liverpool': 'thered', // 6 chars
+  'bedsa': 'bedsa2025' // 8 chars
+};
+
+// Validate password lengths before seeding
+for (const [room, password] of Object.entries(roomPasswords)) {
+  if (password && password.length > 30) {
+    throw new Error(`Password for ${room} exceeds 30 characters`);
+  }
+}
+
 // Topic-specific message templates
 const roomMessages = {
   'general': [
@@ -198,7 +214,7 @@ const seedDatabase = async () => {
       }
     }
 
-    // Create only the 5 specific rooms
+    // Create only the 5 specific rooms with passwords
     const roomNames = ['general', 'arsenal', 'man-u', 'liverpool', 'bedsa'];
     const roomTopics = [
       'General Chat',
@@ -209,30 +225,47 @@ const seedDatabase = async () => {
     ];
     
     const rooms = [];
+    const roomCredentials = [];
     console.log('\n🚪 Creating 5 specific rooms...');
     console.log();
     
     for (let i = 0; i < 5; i++) {
       try {
+        const roomName = roomNames[i];
+        const password = roomPasswords[roomName];
+        
         // Assign 5 users to each room
         const participants = [];
-        const startIndex = i * 3; // Distribute users across rooms
+        const startIndex = i * 3;
         for (let j = 0; j < 5; j++) {
           const userIndex = (startIndex + j) % users.length;
           participants.push(users[userIndex]._id);
         }
 
-        const room = new Room({
-          name: roomNames[i],
-          isPrivate: false,
+        const roomData = {
+          name: roomName,
+          isPrivate: password !== null,
           participants,
-          createdBy: participants[0], // First participant is creator
-          topic: roomTopics[i]
-        });
+          createdBy: participants[0],
+          topic: roomTopics[i],
+          requiresPassword: password !== null
+        };
+
+        if (password) {
+          roomData.password = await bcrypt.hash(password, 10);
+        }
+
+        const room = new Room(roomData);
         
         await room.save();
         rooms.push(room);
-        console.log(`➕ Created room ${roomNames[i]} (${roomTopics[i]}) with 5 participants`);
+        roomCredentials.push({
+          room: roomName,
+          password: password || 'No password',
+          topic: roomTopics[i]
+        });
+        
+        console.log(`➕ Created room ${roomName} (${roomTopics[i]}) with ${password ? 'password' : 'no password'}`);
         
         // Add 500ms delay between creations
         if (i < 4) await new Promise(resolve => setTimeout(resolve, 500));
@@ -250,10 +283,8 @@ const seedDatabase = async () => {
         const roomName = room.name;
         const participants = room.participants;
         
-        // Get the conversation flow for this room
         const flow = conversationFlows[roomName] || conversationFlows['general'];
         
-        // Create each message in the conversation flow
         for (const messageData of flow) {
           const sender = participants[messageData.userIndex % participants.length];
           const senderUser = users.find(u => u._id.equals(sender));
@@ -264,7 +295,7 @@ const seedDatabase = async () => {
             room: room._id,
             roomName: room.name,
             time: new Date(),
-            file: null, // Simplified file field
+            file: null,
             readBy: [senderUser.username],
             deletedFor: []
           });
@@ -272,7 +303,6 @@ const seedDatabase = async () => {
           await message.save();
           console.log(`   ➕ Added message to ${room.name} from ${senderUser.username}: "${messageData.message}"`);
           
-          // Small delay between messages to simulate real conversation
           await new Promise(resolve => setTimeout(resolve, 300));
         }
       } catch (error) {
@@ -284,6 +314,9 @@ const seedDatabase = async () => {
     console.log();
     console.log('📋 User credentials (pre-hash):');
     console.table(rawCredentials);
+
+    console.log('\n🔑 Room Passwords:');
+    console.table(roomCredentials);
 
     console.log('\n💾 Database Summary:');
     console.log(`   👤 Users created: ${users.length}`);

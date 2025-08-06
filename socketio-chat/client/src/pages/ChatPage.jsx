@@ -13,6 +13,10 @@ export default function ChatPage({ username, onLogout }) {
   const [currentRoom, setCurrentRoom] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [passwordError, setPasswordError] = useState('');
   const typingTimeout = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -47,8 +51,15 @@ export default function ChatPage({ username, onLogout }) {
       socket.on('roomList', roomList => {
         setRooms(roomList);
         if (!currentRoom && roomList.length) {
-          const initialRoom = roomList[0].name;
-          socket.emit('joinRoom', { roomName: initialRoom, username });
+          const generalRoom = roomList.find(r => r.name === 'general');
+          const initialRoom = generalRoom || roomList.find(r => !r.requiresPassword)?.name || roomList[0].name;
+          if (initialRoom) {
+            socket.emit('joinRoom', { 
+              roomName: initialRoom.name, 
+              username,
+              password: initialRoom.requiresPassword ? '' : undefined
+            });
+          }
         }
       });
 
@@ -110,6 +121,14 @@ export default function ChatPage({ username, onLogout }) {
         }
       });
 
+      socket.on('roomError', ({ message }) => {
+        if (showPasswordModal) {
+          setPasswordError(message);
+        } else {
+          alert(`Room error: ${message}`);
+        }
+      });
+
       socket.on('error', ({ message }) => {
         console.error('Socket error:', message);
       });
@@ -122,11 +141,11 @@ export default function ChatPage({ username, onLogout }) {
         [
           'roomList', 'roomJoined', 'roomHistory', 'message', 
           'userJoined', 'userLeft', 'typing', 'stopTyping',
-          'readUpdate', 'messageDeleted', 'error'
+          'readUpdate', 'messageDeleted', 'error', 'roomError'
         ].forEach(evt => socket.off(evt));
       }
     };
-  }, [socket, username, currentRoom]);
+  }, [socket, username, currentRoom, showPasswordModal]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -332,16 +351,72 @@ export default function ChatPage({ username, onLogout }) {
     clearTimeout(typingTimeout.current);
   };
 
-  const joinRoom = roomName => {
-    if (socket && roomName && roomName !== currentRoom) {
-      socket.emit('joinRoom', { roomName, username });
+  const handlePasswordSubmit = () => {
+    if (!passwordInput.trim()) {
+      setPasswordError('Password is required');
+      return;
+    }
+    
+    socket.emit('joinRoom', { 
+      roomName: selectedRoom.name, 
+      username,
+      password: passwordInput 
+    }, (response) => {
+      if (response?.error) {
+        setPasswordError(response.error);
+      } else {
+        setShowPasswordModal(false);
+        setCurrentRoom(selectedRoom.name);
+        setMessages([]);
+      }
+    });
+  };
+
+  const joinRoom = (room) => {
+    if (!socket || !room || room.name === currentRoom) return;
+
+    if (room.requiresPassword && room.name !== 'general') {
+      setSelectedRoom(room);
+      setShowPasswordModal(true);
+      setPasswordInput('');
+      setPasswordError('');
+    } else {
+      socket.emit('joinRoom', { 
+        roomName: room.name, 
+        username,
+        password: '' // Explicitly send empty password for non-protected rooms
+      });
     }
   };
 
-  const createRoom = roomName => {
-    const name = roomName?.trim();
-    if (socket && name) {
-      socket.emit('createRoom', { roomName: name, username });
+  const createRoom = () => {
+    const roomName = prompt("Enter new room name:");
+    if (!roomName?.trim()) return;
+
+    if (roomName.toLowerCase() === 'general') {
+      alert("Cannot create a room named 'general'");
+      return;
+    }
+
+    const wantsPassword = confirm("Do you want to password-protect this room?");
+    
+    if (wantsPassword) {
+      const password = prompt("Enter room password (4-20 characters):");
+      if (password && password.length >= 4 && password.length <= 20) {
+        socket.emit('createRoom', { 
+          roomName: roomName.trim(), 
+          username,
+          password,
+          isPrivate: true
+        });
+      } else {
+        alert("Password must be between 4-20 characters");
+      }
+    } else {
+      socket.emit('createRoom', { 
+        roomName: roomName.trim(), 
+        username 
+      });
     }
   };
 
@@ -383,6 +458,42 @@ export default function ChatPage({ username, onLogout }) {
         </div>
       )}
 
+      {showPasswordModal && (
+        <div className="password-modal-overlay">
+          <div className="password-modal">
+            <h3>Enter Password for {selectedRoom?.name}</h3>
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={(e) => {
+                setPasswordInput(e.target.value);
+                setPasswordError('');
+              }}
+              placeholder="Room password"
+              autoFocus
+              onKeyPress={(e) => e.key === 'Enter' && handlePasswordSubmit()}
+            />
+            {passwordError && <div className="password-error">{passwordError}</div>}
+            <div className="password-modal-buttons">
+              <button 
+                onClick={() => {
+                  setShowPasswordModal(false);
+                  setPasswordInput('');
+                  setPasswordError('');
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handlePasswordSubmit}
+              >
+                Join Room
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="chat-container">
         <aside className="sidebar">
           <div className="sidebar-header">
@@ -395,10 +506,7 @@ export default function ChatPage({ username, onLogout }) {
           <div className="sidebar-body">
             <div className="room-header">
               <h3>Rooms</h3>
-              <button onClick={() => {
-                const roomName = prompt("Enter new room name:");
-                createRoom(roomName);
-              }}>
+              <button onClick={createRoom}>
                 + New
               </button>
             </div>
@@ -407,10 +515,13 @@ export default function ChatPage({ username, onLogout }) {
               <div
                 key={room.name}
                 className={`room-item ${currentRoom === room.name ? 'active' : ''}`}
-                onClick={() => joinRoom(room.name)}
+                onClick={() => joinRoom(room)}
               >
                 <span className="dot"></span>
                 {room.name}
+                {room.requiresPassword && room.name !== 'general' && (
+                  <span className="lock-icon">🔒</span>
+                )}
                 <span className="count">{room.userCount || 0}</span>
               </div>
             ))}
