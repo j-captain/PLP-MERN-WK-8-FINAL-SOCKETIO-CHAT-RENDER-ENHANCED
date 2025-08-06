@@ -137,8 +137,8 @@ const readReceipts = new Map();
 const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = isProduction
   ? [
-      'https://plp-mern-wk-8-final-socketio-chat-render-l57q.onrender.com', // Your frontend
-      'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com', // Your backend
+      'https://plp-mern-wk-8-final-socketio-chat-render-l57q.onrender.com', // My frontend
+      'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com', // My backend
       ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
     ]
   : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'];
