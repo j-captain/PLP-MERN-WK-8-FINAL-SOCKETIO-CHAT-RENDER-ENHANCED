@@ -6,28 +6,39 @@ export default function AuthPage({ onAuthSuccess }) {
 
   const handleAuth = async (username, password, isLogin) => {
     try {
-      const endpoint = isLogin ? '/api/login' : '/api/register';
+      const endpoint = isLogin ? '/login' : '/register';
       const apiUrl = import.meta.env.VITE_API_URL || 
                     (import.meta.env.DEV 
                       ? 'http://localhost:5000/api' 
                       : 'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com/api');
       
-      // Remove duplicate /api if present in both apiUrl and endpoint
-      const fullUrl = `${apiUrl.replace(/\/api$/, '')}${endpoint}`;
-
-      const response = await fetch(fullUrl, {
+      const response = await fetch(`${apiUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
         credentials: 'include'
       });
 
+      // First read the response as text
+      const responseText = await response.text();
+      
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || await response.text());
+        // Try to parse as JSON if possible
+        try {
+          const errorData = JSON.parse(responseText);
+          throw new Error(errorData.message || 'Authentication failed');
+        } catch {
+          throw new Error(responseText || 'Authentication failed');
+        }
       }
 
-      onAuthSuccess(username);
+      // If successful, try to parse as JSON
+      try {
+        const data = JSON.parse(responseText);
+        onAuthSuccess(username, data);
+      } catch {
+        onAuthSuccess(username);
+      }
     } catch (err) {
       setError(err.message || 'Authentication failed');
       console.error('Auth error:', err);
