@@ -135,19 +135,30 @@ const userSockets = new Map();
 const readReceipts = new Map();
 
 const isProduction = process.env.NODE_ENV === 'production';
-const allowedOrigins = isProduction 
-  ? process.env.ALLOWED_ORIGINS.split(',')
+const allowedOrigins = isProduction
+  ? [
+      'https://plp-mern-wk-8-final-socketio-chat-render-l57q.onrender.com', // Your frontend
+      'https://plp-mern-wk-8-final-socketio-chat-render.onrender.com', // Your backend
+      ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+    ]
   : ['http://localhost:5173', 'http://127.0.0.1:5173', 'https://admin.socket.io'];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin && !isProduction) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Allow all origins in development
+    if (!isProduction) return callback(null, true);
+    
+    // Check if origin is allowed
+    if (allowedOrigins.some(allowedOrigin => 
+      origin === allowedOrigin || 
+      origin.startsWith(allowedOrigin.replace('https://', 'http://'))
+    )) {
       callback(null, true);
     } else {
-      console.log(colorful.error(`Blocked by CORS: ${origin}`));
+      console.log(`Blocked by CORS: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
